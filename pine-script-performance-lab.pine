@@ -1,0 +1,126 @@
+//@version=6
+// Pine Script Performance Lab
+// Blog eşliği: Profiler ölçümü, geçmiş kapsamı, yerleşik fonksiyonlar,
+// döngü/array bütçesi, birleşik request ve kontrollü çizim güncellemesi.
+
+indicator(
+     title             = "Pine Script Performance Lab",
+     shorttitle        = "PS-PERF",
+     overlay           = true,
+     max_bars_back     = 5000,
+     calc_bars_count   = 5000,
+     max_labels_count  = 20,
+     max_lines_count   = 20,
+     max_boxes_count   = 20)
+
+grpScope = "1 · Hesap kapsamı"
+calcBars = input.int(3000, "calc_bars_count", minval=200, maxval=20000, group=grpScope,
+     tooltip="indicator() calc_bars_count ile aynı mantık: gereksiz uzun geçmişi sınırlayın.")
+
+grpSignal = "2 · Yerleşik hesap"
+maLen     = input.int(21, "MA uzunluğu", minval=2, group=grpSignal)
+atrLen    = input.int(14, "ATR uzunluğu", minval=1, group=grpSignal)
+src       = input.source(close, "Kaynak", group=grpSignal)
+
+grpLoop = "3 · Döngü bütçesi"
+lookback = input.int(50, "Yerel tepe arama (bar)", minval=5, maxval=200, group=grpLoop)
+
+grpArr = "4 · Array penceresi"
+winLen = input.int(30, "Sabit pencere boyutu", minval=5, maxval=200, group=grpArr)
+
+grpMtf = "5 · Birleşik request"
+useHtf   = input.bool(true, "Üst TF filtre", group=grpMtf)
+htfTf    = input.timeframe("60", "Üst timeframe", group=grpMtf)
+htfMaLen = input.int(50, "Üst TF MA", minval=5, group=grpMtf)
+
+grpDraw = "6 · Çizim"
+showTable = input.bool(true, "Özet tablo (yalnız son bar)", group=grpDraw)
+showMarks = input.bool(true, "Yerel tepe işaretleri", group=grpDraw)
+
+// ─── 2) Yerleşik fonksiyonlar (ta.*) ────────────────────────────────────────
+float ma  = ta.sma(src, maLen)
+float atr = ta.atr(atrLen)
+float hi  = ta.highest(high, lookback)
+float lo  = ta.lowest(low, lookback)
+
+// ─── 5) Tek request ile birden fazla değer (tuple) ───────────────────────────
+f_htfBundle() =>
+    float htfClose = close
+    float htfMa    = ta.sma(close, htfMaLen)
+    [htfClose, htfMa]
+
+[htfClose, htfMa] = request.security(
+     syminfo.tickerid,
+     htfTf,
+     f_htfBundle(),
+     lookahead=barmerge.lookahead_off,
+     calc_bars_count=calcBars)
+
+bool htfBull = not useHtf or htfClose >= htfMa
+bool htfBear = not useHtf or htfClose < htfMa
+
+// ─── 3) Daraltılmış döngü + erken break ─────────────────────────────────────
+f_barsSinceLocalHigh() =>
+    int found = na
+    int limit = math.min(lookback, bar_index)
+    for i = 1 to limit
+        if high[i] >= hi
+            found := i
+            break
+    found
+
+int barsSinceHigh = f_barsSinceLocalHigh()
+
+// ─── 4) Sabit uzunluklu array penceresi ─────────────────────────────────────
+var array<float> win = array.new_float(0)
+
+f_pushWindow(float v, int maxSize) =>
+    array.push(win, v)
+    if array.size(win) > maxSize
+        array.shift(win)
+
+f_pushWindow(src, winLen)
+float winAvg = array.size(win) > 0 ? array.avg(win) : na
+
+// ─── Sinyal (hafif) ─────────────────────────────────────────────────────────
+bool longBias  = src > ma and htfBull
+bool shortBias = src < ma and htfBear
+
+plot(ma, "MA", color=color.new(color.teal, 0), linewidth=2)
+plot(winAvg, "Pencere ort.", color=color.new(color.orange, 30), linewidth=1)
+
+bgcolor(longBias ? color.new(color.green, 92) : shortBias ? color.new(color.red, 92) : na)
+
+// ─── 6–7) Çizimler yalnız son barda ─────────────────────────────────────────
+var label tipLabel = na
+var table infoTbl  = na
+
+if barstate.islast
+    if showMarks
+        if not na(tipLabel)
+            label.delete(tipLabel)
+        tipLabel := label.new(
+             bar_index,
+             high,
+             "Yerel tepe ~ " + str.tostring(barsSinceHigh) + " bar önce",
+             style=label.style_label_down,
+             color=color.new(color.gray, 20),
+             textcolor=color.white,
+             size=size.small)
+
+    if showTable
+        if na(infoTbl)
+            infoTbl := table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 75))
+        table.cell(infoTbl, 0, 0, "Metrik", text_color=color.gray)
+        table.cell(infoTbl, 1, 0, "Değer", text_color=color.gray)
+        table.cell(infoTbl, 0, 1, "MA", text_color=color.white)
+        table.cell(infoTbl, 1, 1, str.tostring(ma, format.mintick), text_color=color.white)
+        table.cell(infoTbl, 0, 2, "ATR", text_color=color.white)
+        table.cell(infoTbl, 1, 2, str.tostring(atr, format.mintick), text_color=color.white)
+        table.cell(infoTbl, 0, 3, "Pencere ort.", text_color=color.white)
+        table.cell(infoTbl, 1, 3, str.tostring(winAvg, format.mintick), text_color=color.white)
+        table.cell(infoTbl, 0, 4, "HTF yön", text_color=color.white)
+        table.cell(infoTbl, 1, 4, htfBull ? "Bull" : "Bear", text_color=color.white)
+
+// Not: Gerçek Profiler ölçümü TradingView Pine Editor → Profiler ile yapılır.
+// Bu script makaledeki 7 adımın pratik birleşik örneğidir.

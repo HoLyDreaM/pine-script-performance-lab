@@ -1,0 +1,33 @@
+//@version=6
+// Anti-örnek — eğitim amaçlı. Bilerek pahalı kalıplar içerir.
+// Pine Profiler ile bu dosyayı ve ana lab scriptini karşılaştırın.
+// Üretimde kullanmayın.
+
+indicator("Performance Lab — Before (Heavy)", shorttitle="PS-HEAVY", overlay=true)
+
+len = input.int(200, "Ağır döngü uzunluğu", minval=20, maxval=500)
+
+// Yerleşik ta.sma yerine her barda uzun döngü
+f_slowSma(src, length) =>
+    float sum = 0.0
+    for i = 0 to length - 1
+        sum += src[i]
+    sum / length
+
+float slowMa = f_slowSma(close, len)
+
+// Her barda büyüyen array (temizleme yok)
+var array<float> unbounded = array.new_float()
+array.push(unbounded, close)
+
+// Ayrı request çağrıları (birleştirilmemiş)
+htfClose = request.security(syminfo.tickerid, "60", close, lookahead=barmerge.lookahead_off)
+htfMa    = request.security(syminfo.tickerid, "60", ta.sma(close, 50), lookahead=barmerge.lookahead_off)
+
+// Her barda yeni label (yaşam döngüsü yok)
+if bar_index % 10 == 0
+    label.new(bar_index, high, "x", style=label.style_label_down, size=size.tiny)
+
+plot(slowMa, "Slow MA")
+plot(htfClose, "HTF Close", display=display.none)
+plot(htfMa, "HTF MA", display=display.none)
